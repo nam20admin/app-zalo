@@ -1,0 +1,379 @@
+```html
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ConnectHub</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:Arial,sans-serif;background:#edf2f8;color:#222}
+button,input{font:inherit}
+button{cursor:pointer;border:0;border-radius:7px;padding:11px 15px;background:#087cf0;color:white}
+button:hover{filter:brightness(.94)}
+input{width:100%;padding:12px;margin:7px 0;border:1px solid #ccd5e1;border-radius:7px;outline-color:#087cf0}
+.hidden{display:none!important}
+#auth{width:min(390px,92%);margin:8vh auto;background:white;padding:28px;border-radius:14px;box-shadow:0 8px 30px #0001}
+.logo{display:flex;align-items:center;gap:10px;color:#087cf0;font-size:25px;font-weight:bold;margin-bottom:22px}
+.logo span{background:#087cf0;color:white;border-radius:10px;padding:8px 12px}
+h2{margin:8px 0 15px}
+.muted{color:#718096;font-size:13px;line-height:1.5}
+.error{color:#d62828;font-size:13px;min-height:18px}
+.switch{text-align:center;margin-top:17px;font-size:14px}
+.switch a{color:#087cf0;cursor:pointer}
+#app{height:100vh;display:flex;background:white}
+.sidebar{width:310px;max-width:42%;border-right:1px solid #e1e6ed;display:flex;flex-direction:column}
+.top{padding:17px;background:#087cf0;color:white;font-size:21px;font-weight:bold}
+.profile{padding:14px;border-bottom:1px solid #eee}
+.content{flex:1;min-width:0;display:flex;flex-direction:column}
+.toolbar{padding:14px;border-bottom:1px solid #eee;display:flex;align-items:center;justify-content:space-between;gap:8px}
+#people{overflow:auto;flex:1}
+.person{padding:14px;border-bottom:1px solid #eee;cursor:pointer}
+.person:hover,.person.active{background:#edf6ff}
+.small{font-size:12px;color:#718096;margin-top:5px}
+#messages{flex:1;overflow:auto;padding:18px;background:#f5f8fc}
+.bubble{padding:10px 13px;margin:8px 0;border-radius:12px;max-width:78%;width:fit-content;background:white;overflow-wrap:anywhere}
+.bubble.mine{margin-left:auto;background:#d8ebff}
+.send{display:flex;gap:8px;padding:12px;border-top:1px solid #eee}
+.send input{margin:0}
+.send button{flex-shrink:0}
+#searchBox{padding:12px;border-bottom:1px solid #eee}
+@media(max-width:600px){.sidebar{width:125px;max-width:35%}.person{padding:10px;font-size:13px}.top{font-size:16px;padding:13px}.toolbar{padding:10px;font-size:13px}.toolbar button{padding:8px;font-size:12px}}
+</style>
+</head>
+<body>
+<section id="auth">
+  <div class="logo"><span>N</span> ConnectHub</div>
+  <div id="registerForm" class="hidden">
+    <h2>Tạo tài khoản</h2>
+    <input id="regName" placeholder="Tên hiển thị">
+    <input id="regUser" placeholder="Tên đăng nhập (ví dụ: nam1901)">
+    <input id="regPass" type="password" placeholder="Mật khẩu">
+    <button style="width:100%" onclick="register()">Đăng ký</button>
+    <p id="regError" class="error"></p>
+    <div class="switch">Đã có tài khoản? <a onclick="showLogin()">Đăng nhập</a></div>
+  </div>
+  <div id="loginForm">
+    <h2>Đăng nhập</h2>
+    <p class="muted">Đăng nhập tài khoản ConnectHub của bạn.</p>
+    <input id="loginUser" autocomplete="username" placeholder="Tên đăng nhập">
+    <input id="loginPass" type="password" autocomplete="current-password" placeholder="Mật khẩu">
+    <button style="width:100%" onclick="login()">Đăng nhập</button>
+    <p id="loginError" class="error"></p>
+    <div class="switch">Chưa có tài khoản? <a onclick="showRegister()">Đăng ký ngay</a></div>
+  </div>
+</section>
+
+<section id="app" class="hidden">
+  <aside class="sidebar">
+    <div class="top">N ConnectHub</div>
+    <div class="profile">
+      <b id="myName"></b>
+      <div class="small" id="myUser"></div>
+      <button style="margin-top:10px;background:#e8f2ff;color:#087cf0" onclick="logout()">Đăng xuất</button>
+    </div>
+    <div id="searchBox">
+      <input id="searchUser" placeholder="Tìm tên đăng nhập...">
+      <button style="width:100%" onclick="findUser()">Tìm bạn</button>
+      <div id="searchResult" class="small"></div>
+    </div>
+    <div id="people"></div>
+  </aside>
+  <main class="content">
+    <div class="toolbar">
+      <b id="chatTitle">Chọn bạn để trò chuyện</b>
+      <button onclick="videoCall()">📹 Gọi video</button>
+    </div>
+    <div id="messages"><p class="muted">Chọn một người bạn ở danh sách bên trái để bắt đầu trò chuyện.</p></div>
+    <form class="send" onsubmit="sendMessage(event)">
+      <input id="messageInput" placeholder="Nhập tin nhắn..." autocomplete="off">
+      <button type="submit">Gửi</button>
+    </form>
+  </main>
+</section>
+
+<script>
+"use strict";
+
+const KEY_USERS = "connecthub_users_v2";
+const KEY_SESSION = "connecthub_session_v2";
+const KEY_FRIENDS = "connecthub_friends_v2";
+const KEY_MESSAGES = "connecthub_messages_v2";
+
+let currentUser = null;
+let selectedUser = null;
+
+function readStore(key, fallback) {
+  try {
+    const value = localStorage.getItem(key);
+    return value ? JSON.parse(value) : fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+function writeStore(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+function users() { return readStore(KEY_USERS, {}); }
+function friends() { return readStore(KEY_FRIENDS, {}); }
+function messages() { return readStore(KEY_MESSAGES, {}); }
+function cleanUser(value) { return value.trim().toLowerCase(); }
+
+function showLogin() {
+  document.getElementById("registerForm").classList.add("hidden");
+  document.getElementById("loginForm").classList.remove("hidden");
+  document.getElementById("regError").textContent = "";
+}
+function showRegister() {
+  document.getElementById("loginForm").classList.add("hidden");
+  document.getElementById("registerForm").classList.remove("hidden");
+  document.getElementById("loginError").textContent = "";
+}
+
+function register() {
+  const name = document.getElementById("regName").value.trim();
+  const username = cleanUser(document.getElementById("regUser").value);
+  const password = document.getElementById("regPass").value;
+  const error = document.getElementById("regError");
+
+  if (!name || !username || !password) {
+    error.textContent = "Vui lòng điền đủ cả 3 ô.";
+    return;
+  }
+  if (!/^[a-z0-9_.-]{3,20}$/.test(username)) {
+    error.textContent = "Tên đăng nhập cần 3–20 ký tự: chữ không dấu, số, dấu chấm hoặc gạch dưới.";
+    return;
+  }
+  if (password.length < 4) {
+    error.textContent = "Mật khẩu cần ít nhất 4 ký tự.";
+    return;
+  }
+
+  const all = users();
+  if (all[username]) {
+    error.textContent = "Tên đăng nhập này đã được sử dụng.";
+    return;
+  }
+
+  all[username] = { name: name, password: password };
+  writeStore(KEY_USERS, all);
+  const f = friends();
+  f[username] = [];
+  writeStore(KEY_FRIENDS, f);
+
+  document.getElementById("loginUser").value = username;
+  document.getElementById("loginPass").value = "";
+  showLogin();
+  document.getElementById("loginError").textContent = "Đăng ký thành công! Hãy nhập mật khẩu để đăng nhập.";
+}
+
+function login() {
+  const username = cleanUser(document.getElementById("loginUser").value);
+  const password = document.getElementById("loginPass").value;
+  const error = document.getElementById("loginError");
+
+  if (!username || !password) {
+    error.textContent = "Hãy nhập tên đăng nhập và mật khẩu.";
+    return;
+  }
+
+  const all = users();
+  if (!all[username] || all[username].password !== password) {
+    error.textContent = "Sai tên đăng nhập hoặc mật khẩu, hoặc tài khoản chưa được tạo.";
+    return;
+  }
+
+  currentUser = username;
+  localStorage.setItem(KEY_SESSION, username);
+  selectedUser = null;
+  error.textContent = "";
+  document.getElementById("auth").classList.add("hidden");
+  document.getElementById("app").classList.remove("hidden");
+  document.getElementById("myName").textContent = all[username].name;
+  document.getElementById("myUser").textContent = "@" + username;
+  renderPeople();
+}
+
+function logout() {
+  localStorage.removeItem(KEY_SESSION);
+  currentUser = null;
+  selectedUser = null;
+  document.getElementById("app").classList.add("hidden");
+  document.getElementById("auth").classList.remove("hidden");
+  document.getElementById("loginPass").value = "";
+  document.getElementById("loginError").textContent = "";
+  showLogin();
+}
+
+function findUser() {
+  const target = cleanUser(document.getElementById("searchUser").value);
+  const result = document.getElementById("searchResult");
+  const all = users();
+
+  if (!target) {
+    result.textContent = "Nhập tên đăng nhập cần tìm.";
+    return;
+  }
+  if (target === currentUser) {
+    result.textContent = "Đây là tài khoản của bạn.";
+    return;
+  }
+  if (!all[target]) {
+    result.textContent = "Không tìm thấy tài khoản @" + target + ".";
+    return;
+  }
+
+  const f = friends();
+  f[currentUser] = f[currentUser] || [];
+  if (f[currentUser].includes(target)) {
+    result.textContent = "Đã là bạn bè.";
+    openChat(target);
+    return;
+  }
+
+  const btn = document.createElement("button");
+  btn.textContent = "Thêm bạn";
+  btn.style.marginTop = "8px";
+  btn.onclick = function() {
+    const latest = friends();
+    latest[currentUser] = latest[currentUser] || [];
+    latest[target] = latest[target] || [];
+    if (!latest[currentUser].includes(target)) latest[currentUser].push(target);
+    if (!latest[target].includes(currentUser)) latest[target].push(currentUser);
+    writeStore(KEY_FRIENDS, latest);
+    result.textContent = "Đã thêm @" + target + " vào danh sách bạn bè trên trình duyệt này.";
+    renderPeople();
+  };
+
+  result.textContent = all[target].name + " (@" + target + ") ";
+  result.appendChild(document.createElement("br"));
+  result.appendChild(btn);
+}
+
+function renderPeople() {
+  const list = document.getElementById("people");
+  list.replaceChildren();
+  const all = users();
+  const f = friends();
+  const myFriends = f[currentUser] || [];
+
+  if (myFriends.length === 0) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.style.padding = "12px";
+    p.textContent = "Chưa có bạn bè. Hãy tìm tên đăng nhập ở trên.";
+    list.appendChild(p);
+    return;
+  }
+
+  myFriends.forEach(function(username) {
+    if (!all[username]) return;
+    const item = document.createElement("div");
+    item.className = "person" + (selectedUser === username ? " active" : "");
+    const name = document.createElement("b");
+    name.textContent = all[username].name;
+    const handle = document.createElement("div");
+    handle.className = "small";
+    handle.textContent = "@" + username;
+    item.append(name, handle);
+    item.onclick = function() { openChat(username); };
+    list.appendChild(item);
+  });
+}
+
+function chatKey(a, b) { return [a, b].sort().join("__"); }
+
+function openChat(username) {
+  selectedUser = username;
+  const all = users();
+  document.getElementById("chatTitle").textContent = all[username].name + " (@" + username + ")";
+  renderPeople();
+  renderMessages();
+}
+
+function renderMessages() {
+  const area = document.getElementById("messages");
+  area.replaceChildren();
+  if (!selectedUser) {
+    area.textContent = "Chọn bạn để trò chuyện.";
+    return;
+  }
+
+  const list = messages()[chatKey(currentUser, selectedUser)] || [];
+  if (list.length === 0) {
+    const p = document.createElement("p");
+    p.className = "muted";
+    p.textContent = "Chưa có tin nhắn. Hãy gửi lời chào!";
+    area.appendChild(p);
+  }
+  list.forEach(function(message) {
+    const bubble = document.createElement("div");
+    bubble.className = "bubble" + (message.from === currentUser ? " mine" : "");
+    bubble.textContent = message.text;
+    area.appendChild(bubble);
+  });
+  area.scrollTop = area.scrollHeight;
+}
+
+function sendMessage(event) {
+  event.preventDefault();
+  if (!currentUser || !selectedUser) {
+    alert("Hãy chọn một người bạn trước khi gửi tin nhắn.");
+    return;
+  }
+
+  const input = document.getElementById("messageInput");
+  const text = input.value.trim();
+  if (!text) return;
+
+  const all = messages();
+  const key = chatKey(currentUser, selectedUser);
+  all[key] = all[key] || [];
+  all[key].push({ from: currentUser, text: text, time: Date.now() });
+  writeStore(KEY_MESSAGES, all);
+  input.value = "";
+  renderMessages();
+}
+
+async function videoCall() {
+  if (!selectedUser) {
+    alert("Hãy chọn một người bạn trước.");
+    return;
+  }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    alert("Trình duyệt không hỗ trợ camera ở trang này. Hãy mở bằng Chrome.");
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({video:true, audio:true});
+    const win = window.open("", "_blank", "width=700,height=600");
+    if (!win) {
+      stream.getTracks().forEach(track => track.stop());
+      alert("Trình duyệt đã chặn cửa sổ gọi. Hãy cho phép cửa sổ bật lên.");
+      return;
+    }
+    win.document.write("<title>ConnectHub - Camera thử</title><h2>Camera thử nghiệm</h2><p>Đây chỉ là hình ảnh camera của bạn, chưa kết nối với người khác.</p><video id='v' autoplay playsinline muted style='width:95%;max-width:650px'></video><button onclick='window.close()'>Đóng</button>");
+    win.document.getElementById("v").srcObject = stream;
+    win.addEventListener("beforeunload", () => stream.getTracks().forEach(track => track.stop()));
+  } catch (e) {
+    alert("Không mở được camera. Hãy kiểm tra quyền camera/micro của Chrome.");
+  }
+}
+
+try {
+  const saved = localStorage.getItem(KEY_SESSION);
+  if (saved && users()[saved]) {
+    document.getElementById("loginUser").value = saved;
+  }
+} catch (e) {}
+
+document.getElementById("loginPass").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") login();
+});
+document.getElementById("regPass").addEventListener("keydown", function(e) {
+  if (e.key === "Enter") register();
+});
+</script>
+</body>
+</html>
+```
